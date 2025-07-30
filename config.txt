@@ -1,0 +1,4 @@
+{
+    "image_dir": "C:/Users/park0/Downloads/sample_dataset/augImg/images",
+    "label_dir": "C:/Users/park0/Downloads/sample_dataset/augImg/labels"
+}
