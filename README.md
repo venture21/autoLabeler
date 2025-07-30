@@ -39,7 +39,8 @@ YOLO v8 객체 탐지 모델 학습을 위한 전문적인 데이터 어노테�
   - **Interval 모드**: 설정한 각도 간격으로 360도까지 다중 회전 생성
   - 예: 30도 설정 시 → 30°, 60°, 90°... 330°까지 11개 생성
 - **스케일 변경**: 0.1~2.0 범위에서 0.1 단위로 정밀 크기 조절
-- **구조화된 저장**: `augmented/images/`와 `augmented/labels/` 폴더로 분리 저장
+- **워킹 디렉토리 지원**: 사용자가 지정한 워킹 디렉토리에 증식 데이터 저장
+- **구조화된 저장**: `워킹디렉토리/augmented/images/`와 `워킹디렉토리/augmented/labels/` 폴더로 분리 저장
 
 ### 데이터 분할
 - **Train/Valid/Test 분할**: 사용자 정의 비율로 데이터셋 분할
@@ -88,9 +89,6 @@ project/
 ├── .gitignore                          # Git 무시 파일 (*.pt 포함)
 ├── images/                             # 원본 이미지 폴더
 ├── labels/                             # YOLO 레이블 폴더
-├── augmented/                          # 증식된 데이터 폴더
-│   ├── images/                         # 증식된 이미지
-│   └── labels/                         # 증식된 레이블
 └── data/                               # 분할된 데이터셋 폴더
     ├── train/
     │   ├── images/
@@ -101,6 +99,26 @@ project/
     └── test/
         ├── images/
         └── labels/
+```
+
+### 데이터 증식 결과 구조 (워킹 디렉토리)
+```
+working_directory/
+└── augmented/                          # 증식된 데이터 폴더
+    ├── images/                         # 증식된 이미지
+    │   ├── image1_flip_h.jpg          # 좌우 대칭
+    │   ├── image1_flip_v.jpg          # 수직 대칭
+    │   ├── image1_rot_30.jpg          # 30도 회전
+    │   ├── image1_rot_60.jpg          # 60도 회전 (Interval 모드)
+    │   ├── image1_scale_0.5.jpg       # 0.5배 스케일
+    │   └── ...
+    └── labels/                         # 증식된 레이블
+        ├── image1_flip_h.txt
+        ├── image1_flip_v.txt
+        ├── image1_rot_30.txt
+        ├── image1_rot_60.txt
+        ├── image1_scale_0.5.txt
+        └── ...
 ```
 
 ### classes.txt 예시
@@ -135,12 +153,13 @@ truck
 
 ### 4. 데이터 증식
 1. **Data Aug** 버튼 클릭
-2. 원하는 증식 옵션 선택:
+2. **Working Dir 선택** 버튼으로 증식 데이터 저장 폴더 지정
+3. 원하는 증식 옵션 선택:
    - 좌우/수직 대칭
    - 회전 (Interval 체크 시 간격별 다중 생성)
    - 스케일 변경 (0.1~2.0)
-3. **증식 적용** 버튼으로 실행
-4. `augmented/` 폴더에 결과 확인
+4. **증식 적용** 버튼으로 실행
+5. `워킹디렉토리/augmented/` 폴더에 결과 확인
 
 ### 5. 데이터 분할
 1. **Data Split** 버튼 클릭
@@ -244,7 +263,7 @@ class_id center_x center_y width height
 
 ### v3.0 (최신)
 - **YOLO-World 자동 검출 기능 추가**
-- **데이터 증식 고도화**: Interval 회전, 정밀 스케일 조절
+- **데이터 증식 고도화**: Interval 회전, 정밀 스케일 조절, 워킹 디렉토리 지원
 - **데이터 분할 기능 추가**: Train/Valid/Test 자동 분할
 - **UI 개선**: 반응형 File List, 가이드라인 표시
 - **SAM2 기능 제거**: 코드 최적화 및 안정성 향상
