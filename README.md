@@ -1,8 +1,15 @@
 # YOLO 데이터 전처리 및 어노테이션 도구
 
-YOLO v8 객체 탐지 모델 학습을 위한 전문적인 데이터 어노테이션 및 증식 프로그램입니다. PyQt5와 OpenCV를 사용하여 개발되었으며, 직관적인 GUI를 통해 효율적인 바운딩 박스 편집을 지원합니다.
+YOLO v8 객체 탐지 모델 학습을 위한 전문적인 데이터 어노테이션 및 증식 프로그램입니다. PyQt5, OpenCV, YOLO-World를 사용하여 개발되었으며, 직관적인 GUI를 통해 효율적인 바운딩 박스 편집과 자동 객체 검출을 지원합니다.
 
 ## 🎯 주요 기능
+
+### YOLO-World 자동 검출 🆕
+- **Zero-shot 검출**: 사전 학습 없이 원하는 클래스 객체 자동 검출
+- **다중 클래스 선택**: 체크박스로 여러 클래스 동시 검출 가능
+- **YOLOv8s-WorldV2**: 최신 YOLO-World v2 모델 사용
+- **실시간 처리**: 선택한 클래스에 대해 즉시 바운딩 박스 생성
+- **수동 편집 통합**: 자동 검출 후 수동으로 추가 편집 가능
 
 ### 바운딩 박스 편집
 - **그리기**: 마우스 좌클릭 드래그로 새 바운딩 박스 생성
@@ -11,24 +18,33 @@ YOLO v8 객체 탐지 모델 학습을 위한 전문적인 데이터 어노테�
 - **삭제**: 마우스 우클릭으로 삭제 (한국어 확인 팝업)
 - **클래스별 색상**: 각 클래스마다 다른 색상으로 바운딩 박스 표시
 - **최소 크기 제한**: 5픽셀 미만 바운딩 박스 생성 방지
+- **가이드라인**: 마우스 위치에 따른 수직/수평 가이드라인 표시
 
 ### 스마트 저장 시스템
 - **자동 저장**: 바운딩 박스 편집 시에만 자동 저장
 - **변경 추적**: 실제 변경이 있을 때만 파일 저장
 - **데이터 보호**: 프로그램 시작 시 기존 레이블 파일 보호
 - **안전한 탐색**: 파일 선택 시 자동 저장하지 않음
+- **분리 저장**: 이미지와 레이블 디렉토리 별도 관리
 
 ### Undo/Redo 시스템
 - **명령 패턴**: 모든 편집 작업에 대한 취소/재실행 지원
 - **무제한 히스토리**: 메모리 허용 범위 내에서 무제한 Undo/Redo
 - **이미지별 관리**: 새 이미지 로드 시 히스토리 초기화
 
-### 데이터 증식
+### 데이터 증식 🆕
 - **좌우 대칭**: 수평 flip 변환
 - **수직 대칭**: 수직 flip 변환  
 - **회전**: 사용자 정의 각도로 회전 (어노테이션 자동 변환)
-- **스케일 변경**: 비율 유지하면서 크기 조절
+  - **Interval 모드**: 설정한 각도 간격으로 360도까지 다중 회전 생성
+  - 예: 30도 설정 시 → 30°, 60°, 90°... 330°까지 11개 생성
+- **스케일 변경**: 0.1~2.0 범위에서 0.1 단위로 정밀 크기 조절
 - **구조화된 저장**: `augmented/images/`와 `augmented/labels/` 폴더로 분리 저장
+
+### 데이터 분할
+- **Train/Valid/Test 분할**: 사용자 정의 비율로 데이터셋 분할
+- **자동 구조 생성**: YOLO 학습에 최적화된 폴더 구조 자동 생성
+- **라벨 매칭**: 이미지와 대응하는 라벨 파일만 포함하여 분할
 
 ### 사용자 인터페이스
 - **한국어 지원**: 모든 UI 요소와 메시지 한국어 제공
@@ -40,12 +56,19 @@ YOLO v8 객체 탐지 모델 학습을 위한 전문적인 데이터 어노테�
 
 ### 필요 패키지
 ```bash
-pip install PyQt5 opencv-python numpy
+pip install PyQt5 opencv-python numpy ultralytics
+```
+
+### YOLO-World 사용을 위한 추가 설치
+```bash
+pip install git+https://github.com/ultralytics/CLIP.git
+# 또는
+pip install openai-clip
 ```
 
 ### 실행
 ```bash
-python yolo_data_preprocessing_tool.py
+python yolo_data_preprocessing_tool_v3.py
 ```
 
 ### 환경 설정 (WSL/Linux)
@@ -58,14 +81,26 @@ export QT_QPA_PLATFORM=offscreen
 
 ```
 project/
-├── yolo_data_preprocessing_tool.py  # 메인 프로그램
-├── classes.txt                      # 클래스 정의 파일
-├── config.txt                       # 설정 저장 파일 (자동 생성)
-├── images/                          # 원본 이미지 폴더
-├── labels/                          # YOLO 레이블 폴더
-└── augmented/                       # 증식된 데이터 폴더
-    ├── images/                      # 증식된 이미지
-    └── labels/                      # 증식된 레이블
+├── yolo_data_preprocessing_tool_v3.py  # 메인 프로그램 (최신)
+├── yolov8s-worldv2.pt                  # YOLO-World v2 모델 파일
+├── classes.txt                         # 클래스 정의 파일
+├── config.txt                          # 설정 저장 파일 (자동 생성)
+├── .gitignore                          # Git 무시 파일 (*.pt 포함)
+├── images/                             # 원본 이미지 폴더
+├── labels/                             # YOLO 레이블 폴더
+├── augmented/                          # 증식된 데이터 폴더
+│   ├── images/                         # 증식된 이미지
+│   └── labels/                         # 증식된 레이블
+└── data/                               # 분할된 데이터셋 폴더
+    ├── train/
+    │   ├── images/
+    │   └── labels/
+    ├── valid/
+    │   ├── images/
+    │   └── labels/
+    └── test/
+        ├── images/
+        └── labels/
 ```
 
 ### classes.txt 예시
@@ -78,24 +113,41 @@ truck
 ## 🎮 사용법
 
 ### 1. 초기 설정
-1. **이미지 디렉토리** 버튼으로 이미지 폴더 선택
-2. **레이블 디렉토리** 버튼으로 레이블 저장 폴더 선택
+1. **Image Dir** 버튼으로 이미지 폴더 선택
+2. **Label Dir** 버튼으로 레이블 저장 폴더 선택
 3. `classes.txt` 파일에 클래스 목록 정의
 
-### 2. 어노테이션 작업
+### 2. YOLO-World 자동 검출 🆕
+1. **Yolo-World** 버튼 클릭하여 모드 활성화
+2. 체크박스로 검출하고 싶은 클래스들 선택
+3. **🔍 Detect Objects** 버튼 클릭
+4. 자동으로 선택한 클래스들의 바운딩 박스 생성
+5. 필요시 수동으로 추가 편집
+
+### 3. 수동 어노테이션 작업
 1. 파일 목록에서 이미지 선택
-2. 박스 라벨에서 현재 클래스 선택
+2. Box Labels에서 현재 클래스 선택 (라디오 버튼)
 3. 마우스 드래그로 바운딩 박스 그리기
 4. 편집 기능 사용:
    - `Ctrl + 드래그`: 박스 이동
    - `Alt + 드래그`: 박스 크기 조절 (8개 핸들)
    - `우클릭`: 박스 삭제
 
-### 3. 데이터 증식
-1. **데이터 증식** 버튼 클릭
-2. 원하는 증식 옵션 선택 (대칭, 회전, 스케일)
+### 4. 데이터 증식
+1. **Data Aug** 버튼 클릭
+2. 원하는 증식 옵션 선택:
+   - 좌우/수직 대칭
+   - 회전 (Interval 체크 시 간격별 다중 생성)
+   - 스케일 변경 (0.1~2.0)
 3. **증식 적용** 버튼으로 실행
 4. `augmented/` 폴더에 결과 확인
+
+### 5. 데이터 분할
+1. **Data Split** 버튼 클릭
+2. Train/Valid/Test 비율 설정
+3. Working Dir 선택
+4. **데이터 분할 실행** 버튼으로 실행
+5. `data/` 폴더에 분할된 데이터셋 생성
 
 ## ⌨️ 단축키
 
@@ -113,6 +165,8 @@ truck
 - **PyQt5**: GUI 프레임워크
 - **OpenCV**: 이미지 처리 및 변환
 - **NumPy**: 수치 연산 및 배열 처리
+- **Ultralytics**: YOLO-World 모델 지원
+- **CLIP**: YOLO-World의 텍스트-이미지 매칭
 - **JSON**: 설정 파일 관리
 
 ## 💡 특징
@@ -140,11 +194,18 @@ truck
    export QT_QPA_PLATFORM=offscreen
    ```
 
-2. **이미지 로드 실패**
-   - 지원 형식: .jpg, .png, .bmp, .jpeg
+2. **YOLO-World CLIP 모듈 오류**
+   ```bash
+   pip install git+https://github.com/ultralytics/CLIP.git
+   # 또는
+   pip install openai-clip
+   ```
+
+3. **이미지 로드 실패**
+   - 지원 형식: .jpg, .png, .bmp, .jpeg, .tiff
    - 파일 권한 확인
 
-3. **레이블 파일 오류**
+4. **레이블 파일 오류**
    - YOLO 형식 준수: `class_id center_x center_y width height`
    - 좌표 값 범위: 0.0 ~ 1.0
 
@@ -181,9 +242,21 @@ class_id center_x center_y width height
 
 ## 🔄 업데이트 이력
 
-### v1.0 (최신)
+### v3.0 (최신)
+- **YOLO-World 자동 검출 기능 추가**
+- **데이터 증식 고도화**: Interval 회전, 정밀 스케일 조절
+- **데이터 분할 기능 추가**: Train/Valid/Test 자동 분할
+- **UI 개선**: 반응형 File List, 가이드라인 표시
+- **SAM2 기능 제거**: 코드 최적화 및 안정성 향상
+
+### v2.0
+- SAM2 세그멘테이션 기능 추가
+- 데이터 증식 기능 구현
+- UI/UX 개선
+
+### v1.0
 - 초기 릴리스
-- 모든 핵심 기능 구현
+- 기본 바운딩 박스 편집 기능
 - 한국어 완전 지원
 - 스마트 저장 시스템 적용
 
