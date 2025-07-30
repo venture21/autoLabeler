@@ -711,6 +711,25 @@ class DataAugmentationWidget(QWidget):
         scale_layout.addStretch()
         layout.addLayout(scale_layout)
         
+        # Working directory selection
+        working_dir_layout = QVBoxLayout()
+        working_dir_label = QLabel("Working Directory")
+        working_dir_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        working_dir_layout.addWidget(working_dir_label)
+        
+        # Working directory display
+        self.working_dir_label = QLabel("Working Dir: 없음")
+        self.working_dir_label.setStyleSheet("padding: 10px; border: 1px solid gray;")
+        self.working_dir_label.setWordWrap(True)
+        working_dir_layout.addWidget(self.working_dir_label)
+        
+        # Select working directory button
+        self.select_working_dir_btn = QPushButton("Working Dir 선택")
+        self.select_working_dir_btn.clicked.connect(self.select_working_dir)
+        working_dir_layout.addWidget(self.select_working_dir_btn)
+        
+        layout.addLayout(working_dir_layout)
+        
         # Apply button
         self.apply_button = QPushButton("증식 적용")
         self.apply_button.setStyleSheet("padding: 10px; font-size: 14px;")
@@ -718,6 +737,17 @@ class DataAugmentationWidget(QWidget):
         
         layout.addStretch()
         self.setLayout(layout)
+        
+        # Initialize working directory
+        self.working_dir = ""
+        
+    def select_working_dir(self):
+        """Select working directory for augmented data"""
+        directory = QFileDialog.getExistingDirectory(self, "Select Working Directory")
+        if directory:
+            self.working_dir = directory
+            self.working_dir_label.setText(f"Working Dir: {os.path.basename(directory)}")
+            self.working_dir_label.setToolTip(directory)
 
 
 class DataSplitWidget(QWidget):
@@ -1279,11 +1309,15 @@ class MainWindow(QMainWindow):
             
     def apply_augmentation(self):
         if not self.current_directory or not self.image_files:
-            QMessageBox.warning(self, "경고", "먼저 디렉토리를 선택하세요.")
+            QMessageBox.warning(self, "경고", "먼저 이미지 디렉토리를 선택하세요.")
             return
             
-        # Create augmented directory structure
-        aug_dir = os.path.join(self.current_directory, "augmented")
+        if not self.aug_widget.working_dir:
+            QMessageBox.warning(self, "경고", "Working Dir을 선택하세요.")
+            return
+            
+        # Create augmented directory structure in working directory
+        aug_dir = os.path.join(self.aug_widget.working_dir, "augmented")
         aug_images_dir = os.path.join(aug_dir, "images")
         aug_labels_dir = os.path.join(aug_dir, "labels")
         
