@@ -4,10 +4,13 @@ import cv2
 import numpy as np
 import copy
 import json
+import random
+import shutil
 from PyQt5.QtWidgets import *
 from PyQt5.QtCore import *
 from PyQt5.QtCore import QEvent
 from PyQt5.QtGui import *
+from ultralytics import YOLOWorld
 
 class BoundingBoxItem:
     def __init__(self, rect, class_id, class_name):
@@ -125,6 +128,17 @@ class ImageCanvas(QLabel):
             (255, 128, 128),  # Light Red
         ]
         
+        # For guide lines
+        self.mouse_pos = None
+        self.show_guides = True
+        self.guide_color = (128, 128, 128)  # Gray color for guides
+        self.setMouseTracking(True)  # Enable mouse tracking
+        
+        # Yolo-World mode
+        self.yolo_world_mode = False
+        self.yolo_world_model = None
+        
+        
     def set_image(self, image_path):
         self.image = cv2.imread(image_path)
         if self.image is None:
@@ -161,6 +175,25 @@ class ImageCanvas(QLabel):
             # Get color for currently selected class
             current_color = self.class_colors[self.selected_class_id % len(self.class_colors)]
             cv2.rectangle(temp_image, self.start_point, self.end_point, current_color, 2)
+            
+            
+        # Draw guide lines
+        if self.show_guides and self.mouse_pos and not self.dragging_bbox and not self.resizing_bbox:
+            x, y = self.mouse_pos
+            h, w = temp_image.shape[:2]
+            
+            # Vertical line
+            cv2.line(temp_image, (x, 0), (x, h-1), self.guide_color, 1, cv2.LINE_AA)
+            # Horizontal line
+            cv2.line(temp_image, (0, y), (w-1, y), self.guide_color, 1, cv2.LINE_AA)
+            
+            # If drawing, show guides from start point
+            if self.drawing and self.start_point:
+                sx, sy = self.start_point
+                # Vertical line from start point
+                cv2.line(temp_image, (sx, 0), (sx, h-1), self.guide_color, 1, cv2.LINE_AA)
+                # Horizontal line from start point
+                cv2.line(temp_image, (0, sy), (w-1, sy), self.guide_color, 1, cv2.LINE_AA)
             
         # Convert to QPixmap and display
         height, width, channel = temp_image.shape
@@ -232,27 +265,114 @@ class ImageCanvas(QLabel):
                 self.end_point = pos
         elif event.button() == Qt.RightButton:
             # Check if click is inside any bounding box
-            for i, bbox in enumerate(self.bounding_boxes):
-                if (bbox.rect[0] <= pos[0] <= bbox.rect[2] and 
-                    bbox.rect[1] <= pos[1] <= bbox.rect[3]):
-                    reply = QMessageBox.question(self, '바운딩 박스 삭제', 
-                                               '바운딩 박스를 삭제할까요?',
-                                               QMessageBox.Yes | QMessageBox.No)
-                    if reply == QMessageBox.Yes:
-                        cmd = DeleteBBoxCommand(self, bbox, i)
-                        cmd.execute()
-                        self.execute_command(cmd)
-                        self.update_display()
-                    break
+                for i, bbox in enumerate(self.bounding_boxes):
+                    if (bbox.rect[0] <= pos[0] <= bbox.rect[2] and 
+                        bbox.rect[1] <= pos[1] <= bbox.rect[3]):
+                        reply = QMessageBox.question(self, '바운딩 박스 삭제', 
+                                                   '바운딩 박스를 삭제할까요?',
+                                                   QMessageBox.Yes | QMessageBox.No)
+                        if reply == QMessageBox.Yes:
+                            cmd = DeleteBBoxCommand(self, bbox, i)
+                            cmd.execute()
+                            self.execute_command(cmd)
+                            self.update_display()
+                        break
                     
+                
+                
+        
+    def set_yolo_world_mode(self, enabled):
+        """Enable or disable Yolo-World mode"""
+        self.yolo_world_mode = enabled
+        if enabled and self.yolo_world_model is None:
+            try:
+                # Load Yolo-World model
+                self.yolo_world_model = YOLOWorld("yolov8s-worldv2.pt")
+                print("YOLO-World v2 model loaded successfully")
+            except ModuleNotFoundError as e:
+                if 'clip' in str(e):
+                    error_msg = ("CLIP 모듈이 설치되지 않았습니다.\n\n"
+                               "다음 명령어로 설치해주세요:\n"
+                               "pip install git+https://github.com/ultralytics/CLIP.git\n\n"
+                               "또는:\n"
+                               "pip install openai-clip")
+                    print(f"CLIP module not found: {e}")
+                    QMessageBox.critical(self, "CLIP 모듈 필요", error_msg)
+                else:
+                    print(f"Module not found: {e}")
+                    QMessageBox.warning(self, "모듈 오류", f"필요한 모듈이 없습니다: {e}")
+                self.yolo_world_mode = False
+            except Exception as e:
+                print(f"Failed to load YOLO-World model: {e}")
+                self.yolo_world_mode = False
+                QMessageBox.warning(self, "YOLO-World Model Error", f"Failed to load YOLO-World model: {e}")
+        self.update_display()
+        
+    def run_yolo_world_detection(self, selected_classes):
+        """Run YOLO-World detection with selected classes"""
+        if not self.yolo_world_model or not selected_classes:
+            return
+            
+        try:
+            # Set classes for detection
+            self.yolo_world_model.set_classes(selected_classes)
+            
+            # Run prediction
+            results = self.yolo_world_model.predict(self.original_image, conf=0.5)
+            
+            if results and len(results) > 0:
+                result = results[0]
+                if hasattr(result, 'boxes') and result.boxes is not None:
+                    boxes = result.boxes
+                    
+                    # Get parent for class information
+                    parent = self.parent()
+                    while parent and not hasattr(parent, 'get_selected_classes_for_yolo_world'):
+                        parent = parent.parent()
+                        
+                    if parent:
+                        class_mapping = parent.get_class_mapping_for_yolo_world()
+                        
+                        # Process each detection
+                        for i in range(len(boxes)):
+                            box = boxes[i]
+                            xyxy = box.xyxy[0].cpu().numpy()
+                            cls = int(box.cls[0].cpu().numpy())
+                            conf = float(box.conf[0].cpu().numpy())
+                            
+                            # Get class name from detection
+                            detected_class = selected_classes[cls] if cls < len(selected_classes) else "unknown"
+                            
+                            # Map to our class system
+                            if detected_class in class_mapping:
+                                class_id, class_name = class_mapping[detected_class]
+                                
+                                # Create bounding box
+                                x1, y1, x2, y2 = map(int, xyxy)
+                                bbox = BoundingBoxItem((x1, y1, x2, y2), class_id, class_name)
+                                cmd = AddBBoxCommand(self, bbox)
+                                cmd.execute()
+                                self.execute_command(cmd)
+                                
+                        self.update_display()
+                        print(f"YOLO-World: Detected {len(boxes)} objects")
+                        
+        except Exception as e:
+            print(f"YOLO-World detection error: {e}")
+            
     def mouseMoveEvent(self, event):
         if self.original_image is None:
             return
             
         pos = self.get_image_coordinates(event.pos())
         if pos is None:
+            self.mouse_pos = None
+            self.update_display()
             return
             
+        # Update mouse position for guide lines
+        self.mouse_pos = pos
+        
         if self.drawing:
             self.end_point = pos
             self.update_display()
@@ -317,6 +437,8 @@ class ImageCanvas(QLabel):
         else:
             # Update cursor based on position
             self.update_cursor(pos)
+            # Update display to show guide lines
+            self.update_display()
                 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -411,6 +533,8 @@ class ImageCanvas(QLabel):
     def leaveEvent(self, event):
         """Reset cursor when mouse leaves the widget"""
         self.setCursor(Qt.ArrowCursor)
+        self.mouse_pos = None  # Clear mouse position
+        self.update_display()  # Remove guide lines
         super().leaveEvent(event)
             
     def execute_command(self, command):
@@ -561,10 +685,16 @@ class DataAugmentationWidget(QWidget):
         self.rotate_check = QCheckBox("이미지 회전")
         rotation_layout.addWidget(self.rotate_check)
         self.rotate_angle = QSpinBox()
-        self.rotate_angle.setRange(-180, 180)
-        self.rotate_angle.setValue(0)
+        self.rotate_angle.setRange(1, 180)
+        self.rotate_angle.setValue(30)
         self.rotate_angle.setSuffix("°")
         rotation_layout.addWidget(self.rotate_angle)
+        
+        # Interval checkbox
+        self.rotate_interval_check = QCheckBox("Interval")
+        self.rotate_interval_check.setToolTip("각도 간격으로 여러 회전 이미지 생성 (예: 30도 간격으로 30°, 60°, 90°... 생성)")
+        rotation_layout.addWidget(self.rotate_interval_check)
+        
         rotation_layout.addStretch()
         layout.addLayout(rotation_layout)
         
@@ -573,9 +703,10 @@ class DataAugmentationWidget(QWidget):
         self.scale_check = QCheckBox("이미지 스케일 변경")
         scale_layout.addWidget(self.scale_check)
         self.scale_factor = QDoubleSpinBox()
-        self.scale_factor.setRange(0.5, 2.0)
+        self.scale_factor.setRange(0.1, 2.0)
         self.scale_factor.setSingleStep(0.1)
-        self.scale_factor.setValue(1.0)
+        self.scale_factor.setValue(0.5)
+        self.scale_factor.setDecimals(1)  # Show 1 decimal place
         scale_layout.addWidget(self.scale_factor)
         scale_layout.addStretch()
         layout.addLayout(scale_layout)
@@ -587,6 +718,107 @@ class DataAugmentationWidget(QWidget):
         
         layout.addStretch()
         self.setLayout(layout)
+
+
+class DataSplitWidget(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.init_ui()
+        
+    def init_ui(self):
+        layout = QVBoxLayout()
+        
+        # Title
+        title = QLabel("데이터 분할 설정")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("font-size: 18px; font-weight: bold; padding: 10px;")
+        layout.addWidget(title)
+        
+        # Description
+        desc = QLabel("데이터셋을 train, valid, test로 분할합니다.\n비율의 합은 1.0이어야 합니다.")
+        desc.setAlignment(Qt.AlignCenter)
+        desc.setStyleSheet("padding: 10px;")
+        layout.addWidget(desc)
+        
+        # Ratio inputs
+        form_layout = QFormLayout()
+        
+        # Train ratio
+        self.train_ratio = QDoubleSpinBox()
+        self.train_ratio.setRange(0.0, 1.0)
+        self.train_ratio.setSingleStep(0.1)
+        self.train_ratio.setValue(0.7)
+        self.train_ratio.valueChanged.connect(self.check_ratio_sum)
+        form_layout.addRow("Train ratio:", self.train_ratio)
+        
+        # Valid ratio
+        self.valid_ratio = QDoubleSpinBox()
+        self.valid_ratio.setRange(0.0, 1.0)
+        self.valid_ratio.setSingleStep(0.1)
+        self.valid_ratio.setValue(0.2)
+        self.valid_ratio.valueChanged.connect(self.check_ratio_sum)
+        form_layout.addRow("Valid ratio:", self.valid_ratio)
+        
+        # Test ratio
+        self.test_ratio = QDoubleSpinBox()
+        self.test_ratio.setRange(0.0, 1.0)
+        self.test_ratio.setSingleStep(0.1)
+        self.test_ratio.setValue(0.1)
+        self.test_ratio.valueChanged.connect(self.check_ratio_sum)
+        form_layout.addRow("Test ratio:", self.test_ratio)
+        
+        layout.addLayout(form_layout)
+        
+        # Sum display
+        self.sum_label = QLabel("합계: 1.0")
+        self.sum_label.setAlignment(Qt.AlignCenter)
+        self.sum_label.setStyleSheet("padding: 10px; font-weight: bold;")
+        layout.addWidget(self.sum_label)
+        
+        # Warning label
+        self.warning_label = QLabel("")
+        self.warning_label.setAlignment(Qt.AlignCenter)
+        self.warning_label.setStyleSheet("color: red; padding: 5px;")
+        layout.addWidget(self.warning_label)
+        
+        # Working directory display
+        self.working_dir_label = QLabel("Working Dir: 없음")
+        self.working_dir_label.setStyleSheet("padding: 10px;")
+        self.working_dir_label.setWordWrap(True)
+        layout.addWidget(self.working_dir_label)
+        
+        # Select working directory button
+        self.select_working_dir_btn = QPushButton("Working Dir 선택")
+        self.select_working_dir_btn.clicked.connect(self.select_working_dir)
+        layout.addWidget(self.select_working_dir_btn)
+        
+        # Apply button
+        self.apply_button = QPushButton("데이터 분할 실행")
+        self.apply_button.setStyleSheet("padding: 10px; font-size: 14px;")
+        layout.addWidget(self.apply_button)
+        
+        layout.addStretch()
+        self.setLayout(layout)
+        
+        self.working_dir = ""
+        
+    def check_ratio_sum(self):
+        total = self.train_ratio.value() + self.valid_ratio.value() + self.test_ratio.value()
+        self.sum_label.setText(f"합계: {total:.1f}")
+        
+        if abs(total - 1.0) > 0.001:
+            self.warning_label.setText("비율의 합이 1.0이 아닙니다!")
+            self.apply_button.setEnabled(False)
+        else:
+            self.warning_label.setText("")
+            self.apply_button.setEnabled(True)
+            
+    def select_working_dir(self):
+        directory = QFileDialog.getExistingDirectory(self, "Select Working Directory")
+        if directory:
+            self.working_dir = directory
+            self.working_dir_label.setText(f"Working Dir: {os.path.basename(directory)}")
+            self.working_dir_label.setToolTip(directory)
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -706,6 +938,19 @@ class MainWindow(QMainWindow):
         self.data_aug_btn.clicked.connect(self.toggle_data_augmentation)
         left_menu.addWidget(self.data_aug_btn)
         
+        # Add Data Split button
+        self.data_split_btn = QPushButton("Data Split")
+        self.data_split_btn.setCheckable(True)
+        self.data_split_btn.clicked.connect(self.toggle_data_split)
+        left_menu.addWidget(self.data_split_btn)
+        
+        # Add Yolo-World button
+        self.yolo_world_btn = QPushButton("Yolo-World")
+        self.yolo_world_btn.setCheckable(True)
+        self.yolo_world_btn.clicked.connect(self.toggle_yolo_world_mode)
+        self.yolo_world_btn.setStyleSheet("QPushButton:checked { background-color: #FF9800; }")
+        left_menu.addWidget(self.yolo_world_btn)
+        
         self.undo_btn = QPushButton("Undo")
         self.undo_btn.clicked.connect(self.undo_action)
         left_menu.addWidget(self.undo_btn)
@@ -732,6 +977,11 @@ class MainWindow(QMainWindow):
         self.aug_widget.apply_button.clicked.connect(self.apply_augmentation)
         self.stacked_widget.addWidget(self.aug_widget)
         
+        # Data split widget
+        self.split_widget = DataSplitWidget()
+        self.split_widget.apply_button.clicked.connect(self.apply_data_split)
+        self.stacked_widget.addWidget(self.split_widget)
+        
         # Right panel widget
         right_widget = QWidget()
         right_layout = QVBoxLayout()
@@ -741,17 +991,45 @@ class MainWindow(QMainWindow):
         class_group = QGroupBox("Box Labels")
         class_layout = QVBoxLayout()
         
+        # Add checkbox mode for Yolo-World
+        self.class_selection_mode = QButtonGroup()
+        self.class_selection_mode.setExclusive(True)  # For radio buttons
+        
         self.class_radio_buttons = []
+        self.class_checkboxes = []
+        
         for i, class_name in enumerate(self.classes):
+            # Create both radio button and checkbox
             radio = QRadioButton(class_name)
+            checkbox = QCheckBox(class_name)
+            
             if i == 0:
                 radio.setChecked(True)
-            radio.toggled.connect(lambda checked, idx=i: self.select_class(idx) if checked else None)
-            self.class_radio_buttons.append(radio)
-            class_layout.addWidget(radio)
             
+            radio.toggled.connect(lambda checked, idx=i: self.select_class(idx) if checked else None)
+            self.class_selection_mode.addButton(radio, i)
+            
+            self.class_radio_buttons.append(radio)
+            self.class_checkboxes.append(checkbox)
+            
+            # Add both to layout but initially hide checkboxes
+            class_layout.addWidget(radio)
+            class_layout.addWidget(checkbox)
+            checkbox.setVisible(False)
+            
+        # Create Yolo-World detection button (initially hidden)
+        self.yolo_world_detect_btn = QPushButton("🔍 Detect Objects")
+        self.yolo_world_detect_btn.clicked.connect(self.run_yolo_world_detection)
+        self.yolo_world_detect_btn.setStyleSheet("background-color: #FF9800; color: white; font-weight: bold; padding: 8px;")
+        self.yolo_world_detect_btn.setVisible(False)
+        class_layout.addWidget(self.yolo_world_detect_btn)
+        
         class_group.setLayout(class_layout)
         right_layout.addWidget(class_group)
+        
+        # Store class layout for switching between radio buttons and checkboxes
+        self.class_group = class_group
+        self.class_layout = class_layout
         
         # File list
         file_group = QGroupBox("File List")
@@ -761,6 +1039,8 @@ class MainWindow(QMainWindow):
         self.file_list.itemClicked.connect(self.file_selected)
         self.file_list.installEventFilter(self)  # Install event filter for keyboard events
         self.file_list.setMinimumWidth(200)  # Set minimum width
+        # Remove fixed height to allow dynamic resizing based on window size
+        self.file_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         file_layout.addWidget(self.file_list)
         
         file_group.setLayout(file_layout)
@@ -977,9 +1257,25 @@ class MainWindow(QMainWindow):
         if checked:
             self.stacked_widget.setCurrentIndex(1)
             self.data_aug_btn.setText("Show Image")
+            # Uncheck other toggle buttons
+            self.data_split_btn.setChecked(False)
         else:
             self.stacked_widget.setCurrentIndex(0)
             self.data_aug_btn.setText("Data Aug")
+            
+    def toggle_data_split(self, checked):
+        if checked:
+            self.stacked_widget.setCurrentIndex(2)
+            self.data_split_btn.setText("Show Image")
+            # Uncheck other toggle buttons
+            self.data_aug_btn.setChecked(False)
+        else:
+            self.stacked_widget.setCurrentIndex(0)
+            self.data_split_btn.setText("Data Split")
+            
+            
+            
+            
             
     def apply_augmentation(self):
         if not self.current_directory or not self.image_files:
@@ -1058,8 +1354,36 @@ class MainWindow(QMainWindow):
                     
             if self.aug_widget.rotate_check.isChecked():
                 angle = self.aug_widget.rotate_angle.value()
-                if angle != 0:
-                    print(f"DEBUG: Applying rotation {angle} degrees")
+                is_interval = self.aug_widget.rotate_interval_check.isChecked()
+                
+                if is_interval and angle > 0:
+                    # Generate multiple rotations at interval
+                    print(f"DEBUG: Applying interval rotation with {angle} degree intervals")
+                    current_angle = angle
+                    rotation_count = 0
+                    
+                    while current_angle < 360:
+                        print(f"DEBUG: Rotating by {current_angle} degrees")
+                        aug_image, aug_annotations = self.rotate_image_and_annotations(image, annotations, current_angle)
+                        print(f"DEBUG: Rotation {current_angle}° annotations: {aug_annotations}")
+                        
+                        # Save to separate directories
+                        cv2.imwrite(os.path.join(aug_images_dir, f"{base_name}_rot_{current_angle}.jpg"), aug_image)
+                        with open(os.path.join(aug_labels_dir, f"{base_name}_rot_{current_angle}.txt"), 'w') as f:
+                            f.writelines(aug_annotations)
+                            
+                        current_angle += angle
+                        rotation_count += 1
+                        
+                        # Safety limit to prevent infinite loop
+                        if rotation_count > 20:
+                            break
+                            
+                    print(f"DEBUG: Generated {rotation_count} rotated images")
+                    
+                elif not is_interval and angle != 0:
+                    # Single rotation (original behavior)
+                    print(f"DEBUG: Applying single rotation {angle} degrees")
                     aug_image, aug_annotations = self.rotate_image_and_annotations(image, annotations, angle)
                     print(f"DEBUG: Rotation annotations: {aug_annotations}")
                     
@@ -1162,6 +1486,103 @@ class MainWindow(QMainWindow):
         new_h = int(h * scale)
         return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
     
+    def apply_data_split(self):
+        if not self.current_directory or not self.label_directory:
+            QMessageBox.warning(self, "경고", "먼저 Image Dir과 Label Dir을 선택하세요.")
+            return
+            
+        if not self.split_widget.working_dir:
+            QMessageBox.warning(self, "경고", "Working Dir을 선택하세요.")
+            return
+            
+        train_ratio = self.split_widget.train_ratio.value()
+        valid_ratio = self.split_widget.valid_ratio.value()
+        test_ratio = self.split_widget.test_ratio.value()
+        
+        # Check ratio sum
+        if abs((train_ratio + valid_ratio + test_ratio) - 1.0) > 0.001:
+            QMessageBox.warning(self, "경고", "비율의 합이 1.0이 아닙니다.")
+            return
+            
+        # Create data directory structure
+        data_dir = os.path.join(self.split_widget.working_dir, "data")
+        train_dir = os.path.join(data_dir, "train")
+        valid_dir = os.path.join(data_dir, "valid")
+        test_dir = os.path.join(data_dir, "test")
+        
+        # Create directories
+        for split_dir in [train_dir, valid_dir, test_dir]:
+            os.makedirs(os.path.join(split_dir, "images"), exist_ok=True)
+            os.makedirs(os.path.join(split_dir, "labels"), exist_ok=True)
+            
+        # Get all image files and their corresponding labels
+        image_label_pairs = []
+        image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff']
+        
+        for file in os.listdir(self.current_directory):
+            if any(file.lower().endswith(ext) for ext in image_extensions):
+                image_path = os.path.join(self.current_directory, file)
+                label_file = os.path.splitext(file)[0] + '.txt'
+                label_path = os.path.join(self.label_directory, label_file)
+                
+                # Only include if label file exists
+                if os.path.exists(label_path):
+                    image_label_pairs.append((image_path, label_path, file, label_file))
+                    
+        if not image_label_pairs:
+            QMessageBox.warning(self, "경고", "라벨이 있는 이미지 파일이 없습니다.")
+            return
+            
+        # Shuffle for random split
+        random.shuffle(image_label_pairs)
+        
+        # Calculate split indices
+        total_files = len(image_label_pairs)
+        train_count = int(total_files * train_ratio)
+        valid_count = int(total_files * valid_ratio)
+        
+        # Split files
+        train_files = image_label_pairs[:train_count]
+        valid_files = image_label_pairs[train_count:train_count + valid_count]
+        test_files = image_label_pairs[train_count + valid_count:]
+        
+        # Progress dialog
+        progress = QProgressDialog("데이터 분할 중...", "취소", 0, total_files, self)
+        progress.setWindowModality(Qt.WindowModal)
+        
+        # Copy files to respective directories
+        file_count = 0
+        for split_name, split_files, split_dir in [
+            ("train", train_files, train_dir),
+            ("valid", valid_files, valid_dir),
+            ("test", test_files, test_dir)
+        ]:
+            for image_path, label_path, image_name, label_name in split_files:
+                if progress.wasCanceled():
+                    return
+                    
+                progress.setValue(file_count)
+                
+                # Copy image
+                dest_image = os.path.join(split_dir, "images", image_name)
+                shutil.copy2(image_path, dest_image)
+                
+                # Copy label
+                dest_label = os.path.join(split_dir, "labels", label_name)
+                shutil.copy2(label_path, dest_label)
+                
+                file_count += 1
+                
+        progress.setValue(total_files)
+        
+        QMessageBox.information(self, "완료", 
+                              f"데이터 분할이 완료되었습니다.\n\n"
+                              f"전체: {total_files}개 파일\n"
+                              f"• Train: {len(train_files)}개\n"
+                              f"• Valid: {len(valid_files)}개\n"
+                              f"• Test: {len(test_files)}개\n\n"
+                              f"저장 위치: {data_dir}")
+    
     def eventFilter(self, source, event):
         # Handle keyboard events for file list navigation
         if source == self.file_list and event.type() == QEvent.KeyPress:
@@ -1198,6 +1619,74 @@ class MainWindow(QMainWindow):
         
     def redo_action(self):
         self.image_canvas.redo()
+        
+    def toggle_yolo_world_mode(self, checked):
+        """Toggle Yolo-World mode on/off"""
+        self.image_canvas.set_yolo_world_mode(checked)
+        
+        if checked:
+            # Return to image view
+            self.stacked_widget.setCurrentIndex(0)
+            # Uncheck other toggle buttons
+            self.data_aug_btn.setChecked(False)
+            self.data_split_btn.setChecked(False)
+            
+            # Switch to checkbox mode for class selection
+            for radio in self.class_radio_buttons:
+                radio.setVisible(False)
+            for checkbox in self.class_checkboxes:
+                checkbox.setVisible(True)
+            
+            # Show Yolo-World detection button
+            self.yolo_world_detect_btn.setVisible(True)
+            
+            # Update button text
+            self.yolo_world_btn.setText("Yolo-World ON")
+            
+            # Update group box title
+            self.class_group.setTitle("Select Classes for Detection")
+        else:
+            # Switch back to radio button mode
+            for checkbox in self.class_checkboxes:
+                checkbox.setVisible(False)
+                checkbox.setChecked(False)  # Reset checkboxes
+            for radio in self.class_radio_buttons:
+                radio.setVisible(True)
+                
+            # Hide Yolo-World detection button
+            self.yolo_world_detect_btn.setVisible(False)
+            
+            # Update button text
+            self.yolo_world_btn.setText("Yolo-World")
+            
+            # Update group box title
+            self.class_group.setTitle("Box Labels")
+            
+    def get_selected_classes_for_yolo_world(self):
+        """Get list of selected classes for YOLO-World detection"""
+        selected_classes = []
+        for i, checkbox in enumerate(self.class_checkboxes):
+            if checkbox.isChecked():
+                selected_classes.append(self.classes[i])
+        return selected_classes
+        
+    def get_class_mapping_for_yolo_world(self):
+        """Get mapping from class name to class ID for YOLO-World"""
+        mapping = {}
+        for i, class_name in enumerate(self.classes):
+            mapping[class_name] = (i, class_name)
+        return mapping
+        
+    def run_yolo_world_detection(self):
+        """Run YOLO-World detection with selected classes"""
+        selected_classes = self.get_selected_classes_for_yolo_world()
+        
+        if not selected_classes:
+            QMessageBox.warning(self, "경고", "검출할 클래스를 하나 이상 선택하세요.")
+            return
+            
+        # Run detection on canvas
+        self.image_canvas.run_yolo_world_detection(selected_classes)
 
 def main():
     app = QApplication(sys.argv)
